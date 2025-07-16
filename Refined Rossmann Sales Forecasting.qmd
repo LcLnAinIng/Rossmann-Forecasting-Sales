@@ -1,0 +1,978 @@
+---
+title: "Refined rossmann Sales Forecasting"
+author: "Charis Lai"
+format: html
+editor: visual
+jupyter: ir
+---
+
+# Environment Setting
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  eval = TRUE,
+  message = FALSE,  
+  warning = FALSE,  
+  error = FALSE,   
+  out.width = "70%",
+  fig.width = 10, 
+  fig.height = 8,
+  fig.retina = 3)
+set.seed(6)
+
+
+library(tidyverse)
+library(readr)
+library(lubridate)
+library(kableExtra)
+library(ggResidpanel)
+library(broom)
+library(rpart)
+library(rpart.plot)
+library(visdat)
+library(tsibble)
+library(colorspace) 
+library(ggrepel) 
+library(plotly)
+library(dplyr)
+library(fpp3)
+library(openintro)
+library(GGally)
+library(car)
+library(meifly)
+library(superml)
+library(corrplot)
+library(purrr)
+library(urca)
+library(fable)
+
+```
+
+```{r}
+
+ross_store <- read_csv("Rossmann_store.csv")
+ross_train <- read_csv("Rossmann_train.csv")
+ross_test <- read_csv("Rossman_test.csv")
+
+```
+
+```{r}
+
+ross_store
+
+```
+
+```{r}
+
+ross_store |> names()
+
+```
+
+```{r}
+
+ross_train
+
+```
+
+```{r}
+
+ross_train |> names()
+
+```
+
+```{r}
+
+ross_test
+
+```
+
+```{r}
+
+ross_test |> names()
+
+```
+
+So we see the attributes in `ross_train` and `ross_test` are similar but not entirely,\
+`ross_test` does not have `Customer` but `Id`
+
+## Description of Data
+
+-   **Id** - an Id that represents a (Store, Date) duple within the test set
+
+-   **Store** - a unique Id for each store
+
+-   **Sales** - the turnover for any given day (this is what you are predicting)
+
+-   **Customers** - the number of customers on a given day
+
+-   **Open** - an indicator for whether the store was open: 0 = closed, 1 = open
+
+-   **StateHoliday** - indicates a state holiday. Normally all stores, with few exceptions, are closed on state holidays. Note that all schools are closed on public holidays and weekends. a = public holiday, b = Easter holiday, c = Christmas, 0 = None
+
+-   **SchoolHoliday** - indicates if the (Store, Date) was affected by the closure of public schools
+
+-   **StoreType** - differentiates between 4 different store models: a, b, c, d
+
+-   **Assortment** - describes an assortment level: a = basic, b = extra, c = extended
+
+-   **CompetitionDistance** - distance in meters to the nearest competitor store
+
+-   **CompetitionOpenSince\[Month/Year\]** - gives the approximate year and month of the time the nearest competitor was opened
+
+-   **Promo** - indicates whether a store is running a promo on that day
+
+-   **Promo2** - Promo2 is a continuing and consecutive promotion for some stores: 0 = store is not participating, 1 = store is participating
+
+-   **Promo2Since\[Year/Week\]** - describes the year and calendar week when the store started participating in Promo2
+
+-   **PromoInterval** - describes the consecutive intervals Promo2 is started, naming the months the promotion is started anew. E.g. "Feb,May,Aug,Nov" means each round starts in February, May, August, November of any given year for that store
+
+-   There is def no leap year in the dataset
+
+## Plan
+
+Merge `Ross_store` & `Ross_train` -\>`rossmann`\
+Use 80% of `rossmann`to train the models\
+Use 20% of `rossmann`to test the models\
+Use `Ross_test` to validate the models
+
+Using `Cross Validation`\
+Each store is one dataset =\> we have 1115 dataset\
+take 20% of them for testing\
+Use Dynamic Harmonic Regression\
+features: Competition, StateHolidays, Schoolholidays, Promotion, Customers (Multicolinearity)\
+*Limitation*:\
+I am not sure if this model would be too specified for this time span, 2013-2015
+
+Dealing with *Multicolinearity*:\
+Check the Variance Inflation Factor
+
+Analysis aspect:\
+Competition time span vs #promotion\
+Competition time span vs sales\
+with & without Competition vs sales\
+Promotion vs State holiday (bar chart)\
+
+# Data Analysis
+
+```{r}
+
+rossmann <- inner_join(ross_store, ross_train, by="Store") |> 
+  mutate(Date = ymd(Date)) |> 
+  as_tsibble(key = Store, index = Date)
+rossmann
+
+```
+
+```{r}
+
+rossmann |> is.na() |> colSums() |> tidy()
+
+```
+
+```{r}
+
+rossmann %>% 
+  filter(is.na(CompetitionOpenSinceYear)) %>% 
+  distinct(Store) %>% 
+  arrange(Store) %>% 
+  print()
+
+```
+
+```{r}
+
+rossmann %>% 
+  filter(is.na(Promo2SinceYear)) %>% 
+  distinct(Store) %>% 
+  arrange(Store) %>% 
+  print()
+
+```
+
+```{r}
+
+rossmann %>% 
+  filter(is.na(CompetitionDistance)) %>% 
+  distinct(Store) %>% 
+  arrange(Store) %>% 
+  print()
+
+```
+
+```{r}
+
+rossmann |> tail()
+
+```
+
+## Learning more about the features
+
+```{r}
+
+the_chosen_one <- 334
+rossmann_chosen <- rossmann |> filter(Store == the_chosen_one)
+rossmann_chosen
+
+```
+
+### State Holidays
+
+```{r}
+
+rossmann$StateHoliday |> unique()
+
+```
+
+### School Holidays
+
+```{r}
+
+rossmann$SchoolHoliday |> unique()
+
+```
+
+```{r}
+
+rossmann_chosen |> gg_season(SchoolHoliday, period = "week")
+
+```
+
+## Relationship between Open and Sales
+
+### Correlation
+
+```{r}
+
+cor(rossmann$Sales, rossmann$Open)
+
+```
+
+Sales and Open has a positive correlation with positive strength
+
+### Is there any record that the shop is open but no sales?
+
+```{r}
+
+rossmann |> filter(Open == 1, Sales == 0)
+
+```
+
+```{r}
+
+rossmann_open_no_sales <- rossmann |> 
+  filter(Open == 1, Sales == 0)
+unique(rossmann_open_no_sales$Store) |> length()
+
+```
+
+There exist stores that open but no sales. And there are 41 of them with 54 observations, which is with proportion 5.4e-5. It could be taken as mistaken record and has small impact to the forecast.
+
+### Is there any record that the shop is closed but with sales?
+
+```{r}
+
+rossmann |> filter(Open == 0, Sales != 0)
+
+```
+
+There does not exist such an mistake.\
+
+### Correlation between all the features
+
+#### To see if I could make the competition into Binary value
+
+1: there exist competition ; 0: there does not exist competition
+
+from previous table (with `colSums` ), we can see that there exist stores without competitions (323348)
+
+```{r}
+
+rossmann |> filter(is.na(CompetitionOpenSinceYear)) |> distinct(Store)
+
+```
+
+```{r}
+
+# setting if there is a Competition into a Binary value
+rossmann |> mutate(
+  Competition = as.integer(!is.na(CompetitionOpenSinceYear))
+) |> distinct(Competition)
+
+```
+
+```{r}
+
+#I just wanna see when does the competition starts and ends :melting_face:
+
+rossmann |> as_tibble() |> 
+  mutate(Competition = as.integer(!is.na(CompetitionOpenSinceYear))) |> 
+  group_by(Store) |> 
+  filter(all(Competition == 0L)) |> 
+  summarise(span_start = min(Date),
+            span_end = max(Date),
+            days_no_comp   = as.integer(span_end - span_start),
+            .groups = "drop"
+            ) 
+```
+
+$\therefore$ all the stores without competition has never had a competition
+
+$\implies$ we could make the competition into a Binary Value
+
+#### Label Encoding
+
+```{r}
+
+label_encoder <- LabelEncoder$new()
+
+rossmann_corr <- rossmann |> mutate(StoreType = label_encoder$fit_transform(StoreType),
+                                    Assortment = label_encoder$fit_transform(Assortment),
+                                    StateHoliday = label_encoder$fit_transform(StateHoliday),
+                                    Competition = as.integer(!is.na(CompetitionOpenSinceYear))) |> 
+  select(StoreType, Assortment, Competition, DayOfWeek, Sales, Customers, Open, Promo, StateHoliday, SchoolHoliday)
+
+rossmann_corr
+
+
+```
+
+```{r}
+
+rossmann_corr |> filter(Sales == 0, DayOfWeek != 7)
+
+```
+
+#### Here we finally go the correlation
+
+```{r}
+# I just wanna check the correlation among features :cry:
+# 1. Make sure all columns are numeric
+
+rossmann_num <- rossmann_corr |> 
+  mutate(across(everything(), as.numeric)) |> 
+  select(-Store)
+
+# 2. Compute the correlation matrix (pairwise complete observations)
+cormat <- cor(rossmann_num, use = "pairwise.complete.obs", method = "pearson")
+
+# 3a. Base R + corrplot visualization
+corrplot(
+  cormat,
+  method        = "color",       # color‐coded squares
+  type          = "upper",       # show upper triangle only
+  order         = "original",      # cluster variables
+  addCoef.col   = "black",       # add correlation coefficients
+  tl.col        = "black",       # label color
+  tl.srt        = 45,            # label rotation
+  diag          = F          # hide diagonal
+)
+
+```
+
+### Promotion
+
+make Promotion into a Binary Value
+
+#### DayOfWeek vs Promotion
+
+```{r}
+
+rossmann |> filter(Promo == 1, DayOfWeek == 6, DayOfWeek == 7) |> sum()
+
+```
+
+There is no promotion for every weekend.
+
+```{r}
+
+promo_day_counts <- rossmann |> filter(DayOfWeek != c(6, 7)) |> 
+  count(Promo, DayOfWeek)
+
+ggplot(promo_day_counts,
+       aes(x = factor(Promo),
+           y = n,
+           fill = factor(DayOfWeek))) +
+  geom_col(position = "dodge") +
+  scale_x_discrete(
+    name   = "Promo",
+    labels = c("0" = "No Promo", "1" = "Promo")
+  ) +
+  labs(
+    y    = "Count",
+    fill = "Day of Week"
+  )
+
+```
+
+There are more weekdays with promotion than without promotion
+
+#### Promo & Promo2
+
+```{r}
+
+rossmann |> filter(Promo == 1, Promo2 == 1) |> count()
+
+```
+
+There are 194016 observations with both Promo and Promo2
+
+```{r}
+
+rossmann |> filter(Promo == 0, Promo2 == 1) |> count()
+
+```
+
+There is even more observation with no Promo but Promo2
+
+```{r}
+
+rossmann |> filter(Promo == 0, Promo2 == 0) |> count()
+
+```
+
+```{r}
+
+rossmann |> filter(Promo == 1, Promo2 == 0) |> count()
+
+```
+
+So for most of the time, there is promotion
+
+```{r}
+
+rossmann_promo <- rossmann |> mutate(
+  Promotion = if_else(Promo == 0 & Promo2 == 0, 0L, 1L)
+) 
+
+promo_monthly_ts <- rossmann_promo %>%
+  as_tsibble(index = Date) %>%
+  filter(Promotion == 1L) %>%
+  index_by(month = yearmonth(Date)) %>%
+  summarise(promo_count = n())
+
+promo_monthly_ts |> ggplot(aes(x = month, y = promo_count)) + geom_line()
+
+```
+
+```{r}
+
+promo_monthly_ts
+
+```
+
+Interestingly, the second half of 2014 has the least promotion
+
+### Assortment
+
+#### Assortment vs StoreType
+
+```{r}
+
+rossmann |> group_by(StoreType) |> count(StoreType, Assortment, name="count") |> arrange(count)
+
+```
+
+```{r}
+
+rossmann |> group_by(Assortment) |> count(Assortment, StoreType, name="count") |> arrange(count)
+
+```
+
+Most of the Store are Type a.\
+Store type a has most of the proportion.\
+Assortment Type b only exists in Type b store.\
+
+### Maybe try Bayesian Inference?
+
+# Time Series Forecasting
+
+```{r}
+
+rossmann_chosen <- rossmann |> filter(Store == the_chosen_one) |> 
+  mutate(StoreType = label_encoder$fit_transform(StoreType),
+                                    Assortment = label_encoder$fit_transform(Assortment),
+                                    StateHoliday = label_encoder$fit_transform(StateHoliday),
+                                    Competition = as.integer(!is.na(CompetitionOpenSinceYear)),
+                                    Promotion = if_else(Promo == 0 & Promo2 == 0, 0L, 1L)) |> 
+  select(StoreType, Assortment, Competition, DayOfWeek, Date, Sales, Customers, Open, Promotion, StateHoliday, SchoolHoliday)
+
+
+
+rossmann_chosen
+
+```
+
+```{r}
+rossmann_chosen |> autoplot(Sales)
+```
+
+very messy, but we are certain that there are so many days with no sales, possibly the store was closed
+
+```{r}
+
+rossmann_chosen |> gg_season(Sales, period = "week")
+
+```
+
+```{r}
+
+rossmann_chosen |> gg_season(Sales, period = "month")
+
+```
+
+There is clearly a seasonal pattern, middle of the month has less sales
+
+```{r}
+
+rossmann_chosen |> gg_season(Sales, period = "year")
+
+```
+
+very messy, but the end of year has more sales\
+we may need differencing to handle this data
+
+```{r}
+
+rossmann_chosen |> ACF(Sales) |> autoplot()
+
+```
+
+There is a sinusoidal pattern, every 7 lags has a spike
+
+```{r}
+
+rossmann_chosen |> autoplot(difference(Sales))
+
+```
+
+```{r}
+
+lambda <- rossmann_chosen |>
+  summarise(Sales = sum(Sales)) |>
+  features(Sales, guerrero) |> 
+  pull(lambda_guerrero)
+
+rossmann_chosen |> autoplot(box_cox(Sales, lambda))
+
+```
+
+It looks like it varies less, but still a bunch of 0s.
+
+```{r}
+
+rossmann_chosen |> autoplot(difference(box_cox(Sales, lambda)))
+
+```
+
+\
+
+```{r}
+
+rossmann_chosen |> mutate(Sales_diff7 = difference(Sales, lag = 7)) |> 
+  autoplot(Sales_diff7) +
+  labs(
+    title = paste("7-day Lag Difference of Sales for Store", the_chosen_one),
+    x     = "Date",
+    y     = "Differenced Sales"
+  ) 
+
+```
+
+```{r}
+
+monthly_median_mean <- rossmann_chosen |> 
+  # create a Year–Month index
+  index_by(Month = yearmonth(Date)) |> 
+  summarise(
+    MedianSales = median(Sales, na.rm = TRUE),
+    MeanSales = mean(Sales, na.rm = T)
+  )
+
+monthly_median_mean |> autoplot(MedianSales)
+
+```
+
+```{r}
+
+monthly_median_mean |> autoplot(MeanSales)
+
+```
+
+All we could see from the plots is there is a sales spike at the end of the year.\
+\
+
+```{r}
+
+rossmann_chosen |> model(
+  STL(box_cox(Sales, lambda))
+) |> components() |> autoplot()
+
+```
+
+The trend is piece-wise, year_seasonality is weird, the remainder is definitely not white noise
+
+```{r}
+
+rossmann |> filter(Store == the_chosen_one) |> 
+  group_by(DayOfWeek) |> 
+  filter(DayOfWeek == 6, Sales == 0)
+
+
+```
+
+We are certain that the store opens on Sat
+
+```{r}
+
+rossmann |> filter(Store == the_chosen_one) |> 
+  group_by(DayOfWeek) |> 
+  filter(DayOfWeek == 7, Sales != 0) 
+
+```
+
+And the store does not open on Sunday
+
+## Tests
+
+### Ljung_Box Test
+
+```{r}
+
+rossmann_chosen |> features(box_cox(Sales, lambda), ljung_box, lag = 7)
+
+```
+
+p=0 =\> it is not white noise
+
+### Unitroot_KPSS Test (Ordinary Differncing)
+
+```{r}
+
+rossmann_chosen |> features(
+                            box_cox(Sales, lambda),
+    list(unitroot_kpss, ~ mean(., na.rm=T))
+)
+
+```
+
+The data appears stationary, mean is not 0\
+=\> we need a constant term in the ARIMA
+
+```{r}
+
+rossmann_chosen |> features(box_cox(Sales, lambda), unitroot_ndiffs)
+
+
+```
+
+And this shows that we do not need ordinary differencing =\> d=0
+
+### Unitroot Seasonal Differencing
+
+```{r}
+
+rossmann_chosen |> features(box_cox(Sales, lambda), unitroot_nsdiffs)
+
+```
+
+We need 1 seasonal differencing =\> D = 1
+
+```{r}
+
+rossmann_chosen |> 
+  mutate(BC_Sales = box_cox(Sales, lambda), 365) |> 
+  features(BC_Sales, unitroot_ndiffs)
+
+```
+
+```{r}
+
+rossmann_chosen |> gg_tsdisplay(
+  box_cox(Sales, lambda), 
+  plot_type = "partial")
+
+```
+
+## Dynamic Harmonic Regression
+
+### ARIMA
+
+```{r}
+
+fit <- rossmann_chosen |> 
+  model(
+    auto_arima = ARIMA(box_cox(Sales, lambda))
+  )
+
+report(fit)
+
+```
+
+```{r}
+
+tidy(fit)
+
+```
+
+```{r}
+
+fit |> gg_tsresiduals()
+
+```
+
+I hate you. You are so ugly.
+
+### ARIMA Regression with Fourier
+
+```{r}
+
+rossmann_chosen_train <- rossmann_chosen |> 
+  filter(year(Date) %in% 2013:2014) |> 
+  summarise(Sales = sum(Sales))
+
+fit_fourier <- rossmann_chosen |> model(
+  arima_fourier1 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=1) + trend() + season() + 
+                           StateHoliday + 
+                           SchoolHoliday + 
+                           Promo + 
+                           Open + 
+                           DayOfWeek,
+                         stepwise = T),
+  
+  arima_fourier2 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=2) + trend() + season() + 
+                           StateHoliday + 
+                           SchoolHoliday + 
+                           Promo + 
+                           Open + 
+                           DayOfWeek,
+                         stepwise = T),
+  
+    arima_fourier3 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=3) + trend() + season() + 
+                           StateHoliday + 
+                           SchoolHoliday + 
+                           Promo + 
+                           Open + 
+                           DayOfWeek,
+                         stepwise = T),
+  
+    arima_fourier4 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=4) + trend() + season() + 
+                           StateHoliday + 
+                           SchoolHoliday + 
+                           Promo + 
+                           Open + 
+                           DayOfWeek,
+                         stepwise = T),
+  
+    arima_fourier5 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=5) + trend() + season() + 
+                           StateHoliday + 
+                           SchoolHoliday + 
+                           Promo + 
+                           Open + 
+                           DayOfWeek,
+                         stepwise = T),
+  
+    arima_fourier6 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=6) + trend() + season() + 
+                           StateHoliday + 
+                           SchoolHoliday + 
+                           Promo + 
+                           Open + 
+                           DayOfWeek,
+                         stepwise = T),
+  
+    arima_fourier7 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=7) + trend() + season() + 
+                           StateHoliday + 
+                           SchoolHoliday + 
+                           Promo + 
+                           Open + 
+                           DayOfWeek,
+                         stepwise = T),
+  
+)
+
+fit_fourier |> select(arima_fourier6) |> report()
+
+```
+
+```{r}
+
+rossmann_chosen_train <- rossmann_chosen |> 
+  filter(year(Date) %in% 2013:2014) |> 
+  summarise(Sales = sum(Sales))
+
+```
+
+```{r}
+
+fit_fourier <- rossmann_chosen_train |> model(
+  arima_fourier1 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=1) + fourier("week", K=1) +
+                           Customers +
+                           StateHoliday + 
+                           SchoolHoliday + 
+                           Promotion + 
+                           Open + 
+                           DayOfWeek +
+                           Assortment +
+                           StoreType
+                         #stepwise = T
+                         ))
+
+report(fit_fourier)
+
+```
+
+What the FAQ it is an NULL Model?????????????????!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+```{r}
+
+fit_fourier |> forecast(h = "2 years") |> 
+  autoplot(Sales, level = 95)
+
+```
+
+## Manipulating the Sundays
+
+```{r}
+
+six_day_sales <- rossmann_chosen |> 
+  filter(DayOfWeek != 7) 
+
+K_grid <- expand.grid(K_week = 1:5, K_year = 1:5)
+
+# Slice out 2013-01-01 through 2014-12-31 for training
+six_day_train <- six_day_sales %>%
+  filter_index("2013-01-01" ~ "2014-12-31")
+
+# Everything from 2015-01-01 onward for testing
+six_day_test  <- six_day_sales %>%
+  filter_index("2015-01-01" ~ .)
+
+
+
+```
+
+### Failure
+
+Fit an DHR model for each K and record AIC
+
+```{r}
+
+aic_results <- K_grid %>%
+  mutate(
+    model = map2(K_week, K_year, ~ six_day_train %>%
+      model(
+        arima = ARIMA(
+          Sales ~ 
+            fourier("week", .x) + 
+            fourier("year", .y) +
+            StoreType + Assortment + Competition +
+            Promotion + Customers + Open + StateHoliday,
+          # let fable select p,d,q on the residuals
+          stepwise = FALSE, 
+          approximation = FALSE
+        )
+      )
+    ),
+    AIC = map_dbl(model, ~ glance(.x)$AIC)
+  ) %>%
+  arrange(AIC)
+
+# Best combination:
+best <- aic_results[1, ]
+best
+
+
+
+```
+
+```{r}
+
+best_params <- aicc_grid %>% slice_min(AICc, n = 1)
+
+best_week <- best_params$K_week
+best_year <- best_params$K_year
+
+fit_best <- best_params$fit[[1]]
+report(fit_best)
+
+
+```
+
+Reinsert Sundays (with zero sales) into the fitted Values
+
+```{r}
+
+# 5.1 extract fitted values for your six-day data
+fitted_vals <- fit_best %>% 
+  augment() %>% 
+  select(Date, .fitted)
+
+# 5.2 build a complete calendar of dates for that period
+all_dates <- tibble(Date = seq(min(rossmann_chosen$Date),
+                               max(rossmann_chosen$Date),
+                               by = "day")) %>%
+  mutate(DayOfWeek = wday(Date, label = FALSE))
+
+# 5.3 join and fill Sundays with zero
+fitted_all <- all_dates %>%
+  left_join(fitted_vals, by = "Date") %>%
+  mutate(.fitted = if_else(DayOfWeek == 7, 0, .fitted))
+
+
+```
+
+### Restart non failure
+
+What if we have the model into 2 phases:\
+We first find out if the observation has `Open == 1`\
+if `Open == 1`, we apply the DHR to forecast the sales\
+if `Open == 0`, we have the `Sales` be 0
+
+```{r}
+
+rossmann_chosen_dhr <- rossmann |> filter(Store == the_chosen_one) |> 
+  mutate(Competition = as.integer(!is.na(CompetitionOpenSinceYear)),
+                                    Promotion = if_else(Promo == 0 & Promo2 == 0, 0L, 1L)) |> 
+  select(StoreType, Assortment, Competition, DayOfWeek, Date, Sales, Customers, Open, Promotion, StateHoliday, SchoolHoliday)  |> 
+  filter(Open == 1) |> 
+  filter_index("2013-01-01" ~ "2014-12-31")
+
+
+```
+
+```{r}
+
+dhr_open_mod <- rossmann_chosen_dhr %>%
+  model(
+    dhr = ARIMA(
+      box_cox(Sales, lambda) ~ fourier("week",  K=1) + fourier("year",  K=1) + 
+               PDQ(D = 0) + pdq(d = 1)
+               #StoreType + 
+               #Assortment + 
+               #Competition +
+               #Promotion + 
+               #Customers +
+               #DayOfWeek +
+               #StateHoliday 
+               #SchoolHoliday
+      #stepwise      = FALSE,
+      #approximation = FALSE
+    )
+  )
+
+
+report(dhr_open_mod)
+
+
+```
+
+## Cross-Validated model training
