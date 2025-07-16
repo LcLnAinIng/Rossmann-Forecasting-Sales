@@ -732,7 +732,7 @@ rossmann_chosen_train <- rossmann_chosen |>
   filter(year(Date) %in% 2013:2014) |> 
   summarise(Sales = sum(Sales))
 
-fit_fourier <- rossmann_chosen |> model(
+fit_fourier <- rossmann_chosen_train |> model(
   arima_fourier1 = ARIMA(box_cox(Sales, lambda) ~ 
                            fourier("year", K=1) + trend() + season() + 
                            StateHoliday + 
@@ -814,15 +814,16 @@ rossmann_chosen_train <- rossmann_chosen |>
 
 fit_fourier <- rossmann_chosen_train |> model(
   arima_fourier1 = ARIMA(box_cox(Sales, lambda) ~ 
-                           fourier("year", K=1) + fourier("week", K=1) +
-                           Customers +
-                           StateHoliday + 
-                           SchoolHoliday + 
-                           Promotion + 
-                           Open + 
-                           DayOfWeek +
-                           Assortment +
-                           StoreType
+                           fourier("year", K=1) +
+                           fourier("week", K=1) 
+                           #Customers +
+                           #StateHoliday + 
+                           #SchoolHoliday + 
+                           #Promotion + 
+                           #Open + 
+                           #DayOfWeek +
+                           #Assortment +
+                           #StoreType
                          #stepwise = T
                          ))
 
