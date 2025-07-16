@@ -941,8 +941,13 @@ if `Open == 0`, we have the `Sales` be 0
 ```{r}
 
 rossmann_chosen_dhr <- rossmann |> filter(Store == the_chosen_one) |> 
+  
   mutate(Competition = as.integer(!is.na(CompetitionOpenSinceYear)),
-                                    Promotion = if_else(Promo == 0 & Promo2 == 0, 0L, 1L)) |> 
+         Promotion = if_else(Promo == 0 & Promo2 == 0, 0L, 1L),
+         StoreType = label_encoder$fit_transform(StoreType),
+         Assortment = label_encoder$fit_transform(Assortment),
+         StateHoliday = label_encoder$fit_transform(StateHoliday)) |> 
+  
   select(StoreType, Assortment, Competition, DayOfWeek, Date, Sales, Customers, Open, Promotion, StateHoliday, SchoolHoliday)  |> 
   filter(Open == 1) |> 
   filter_index("2013-01-01" ~ "2014-12-31")
@@ -956,7 +961,7 @@ dhr_open_mod <- rossmann_chosen_dhr %>%
   model(
     dhr = ARIMA(
       box_cox(Sales, lambda) ~ fourier("week",  K=1) + fourier("year",  K=1) + 
-               PDQ(D = 0) + pdq(d = 1)
+               PDQ() + pdq()
                #StoreType + 
                #Assortment + 
                #Competition +
