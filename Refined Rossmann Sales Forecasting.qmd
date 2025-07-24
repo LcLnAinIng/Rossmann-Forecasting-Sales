@@ -491,11 +491,12 @@ Assortment Type b only exists in Type b store.\
 ```{r}
 
 rossmann_chosen <- rossmann |> filter(Store == the_chosen_one) |> 
-  mutate(StoreType = label_encoder$fit_transform(StoreType),
-                                    Assortment = label_encoder$fit_transform(Assortment),
-                                    StateHoliday = label_encoder$fit_transform(StateHoliday),
-                                    Competition = as.integer(!is.na(CompetitionOpenSinceYear)),
-                                    Promotion = if_else(Promo == 0 & Promo2 == 0, 0L, 1L)) |> 
+  mutate(
+    StoreType = label_encoder$fit_transform(StoreType),
+    Assortment = label_encoder$fit_transform(Assortment),
+    StateHoliday = label_encoder$fit_transform(StateHoliday),
+    Competition = as.integer(!is.na(CompetitionOpenSinceYear)),
+    Promotion = if_else(Promo == 0 & Promo2 == 0, 0L, 1L)) |> 
   select(StoreType, Assortment, Competition, DayOfWeek, Date, Sales, Customers, Open, Promotion, StateHoliday, SchoolHoliday)
 
 
@@ -712,7 +713,13 @@ report(fit)
 
 ```{r}
 
-tidy(fit)
+fit |> glance()
+
+```
+
+```{r}
+
+fit |> tidy()
 
 ```
 
@@ -726,21 +733,25 @@ I hate you. You are so ugly.
 
 ### ARIMA Regression with Fourier
 
+The `trend()` component should not be added in the model since the slope of the trend changes over time
+
 ```{r}
 
 rossmann_chosen_train <- rossmann_chosen |> 
-  filter(year(Date) %in% 2013:2014) |> 
-  summarise(Sales = sum(Sales))
+  filter(year(Date) %in% 2013:2014) 
+  # |> summarise(Sales = sum(Sales))
 
 fit_fourier <- rossmann_chosen_train |> model(
   arima_fourier1 = ARIMA(box_cox(Sales, lambda) ~ 
-                           fourier("year", K=1) + trend() + season() + 
+                           fourier("year", K=1) + fourier("week", K=1)+
                            StateHoliday + 
                            SchoolHoliday + 
                            Promo + 
                            Open + 
                            DayOfWeek,
-                         stepwise = T),
+                         stepwise = T)
+
+  ,
   
   arima_fourier2 = ARIMA(box_cox(Sales, lambda) ~ 
                            fourier("year", K=2) + trend() + season() + 
@@ -798,22 +809,32 @@ fit_fourier <- rossmann_chosen_train |> model(
   
 )
 
-fit_fourier |> select(arima_fourier6) |> report()
+
+fit_fourier |>  report()
 
 ```
 
 ```{r}
 
 rossmann_chosen_train <- rossmann_chosen |> 
-  filter(year(Date) %in% 2013:2014) |> 
-  summarise(Sales = sum(Sales))
+  filter(year(Date) %in% 2013:2014) 
+
+rossmann_chosen_train
 
 ```
 
-```{r}
+```{r, DO NOT TOUCH, HANDS OFF}
+
+
+"""
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+"""
 
 fit_fourier <- rossmann_chosen_train |> model(
-  arima_fourier1 = ARIMA(box_cox(Sales, lambda) ~ 
+  arima_fourier11 = ARIMA(box_cox(Sales, lambda) ~ 
                            fourier("year", K=1) +
                            fourier("week", K=1) 
                            #Customers +
@@ -825,19 +846,192 @@ fit_fourier <- rossmann_chosen_train |> model(
                            #Assortment +
                            #StoreType
                          #stepwise = T
-                         ))
+                         ),
+  
+  arima_fourier12 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=1) +
+                           fourier("week", K=2)),
+  
+  arima_fourier13 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=1) +
+                           fourier("week", K=3)),
+  
+  arima_fourier23 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=2) +
+                           fourier("week", K=3)),
+  
+  arima_fourier33 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=3) +
+                           fourier("week", K=3)),
+  
+  arima_fourier43 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=4) +
+                           fourier("week", K=3)),
+  
+  arima_fourier53 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=5) +
+                           fourier("week", K=3)),
+  
+  arima_fourier63 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=6) +
+                           fourier("week", K=3)),
+  
+  arima_fourier73 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=7) +
+                           fourier("week", K=3)),
+  
+  arima_fourier83 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=8) +
+                           fourier("week", K=3)),
+  
+  arima_fourier93 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=9) +
+                           fourier("week", K=3)),
+  
 
-report(fit_fourier)
+  arima_fourier103 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=10) +
+                           fourier("week", K=3)),
+  
+  arima_fourier123 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=12) +
+                           fourier("week", K=3)),
+  
+  arima_fourier153 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=15) +
+                           fourier("week", K=3)),
+  
+  arima_fourier163 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=16) +
+                           fourier("week", K=3)),
+  
+  arima_fourier183 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=18) +
+                           fourier("week", K=3)),
+  
+  arima_fourier203 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=20) +
+                           fourier("week", K=3))
+  
+
+  )
+
+fit_fourier |> select(arima_fourier203) |> report()
+
+
+"""
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+"""
 
 ```
 
-What the FAQ it is an NULL Model?????????????????!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+```{r}
+
+# 1. pull out AIC and BIC in the original order
+metrics <- fit_fourier %>%
+  glance() %>%
+  select(.model, AIC, BIC)
+
+# 2. record the original order
+orig_order <- metrics %>% pull(.model)
+
+# 3. drop the two models
+metrics2 <- metrics %>%
+  filter(!.model %in% c("arima_fourier11", "arima_fourier12"))
+
+# 4. make .model a factor so ggplot respects the original order
+metrics2 <- metrics2 %>%
+  mutate(.model = factor(.model, levels = orig_order[orig_order %in% .model]))
+
+# 5. reshape to long form
+metrics_long <- metrics2 %>%
+  pivot_longer(c(AIC, BIC), names_to = "IC", values_to = "value")
+
+# 6. plot
+ggplot(metrics_long, aes(x = .model, y = value, color = IC, group = IC)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "AIC and BIC for Selected Fourier‐ARIMA Models",
+    x     = "Model",
+    y     = "Information Criterion"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+My apology to providing a very messy graph. But the conclusion of the graph could be found here.\
+It is found that $\forall K \ge 3$ in the week Fourier term, a null model is output, while week Fourier term with K=3 gives the least AIC. And the table below proof so.\
+The K for year Fourier is alternated. There is an obvious decrease from K=1 to K=7. After since K=9, the AIC are pretty much the same.
+
+In order to keep a neat mode, we choose `fourier("week", K = 3)` and `fourier("year", K = 9)`
 
 ```{r}
 
-fit_fourier |> forecast(h = "2 years") |> 
-  autoplot(Sales, level = 95)
+rossmann_chosen_train |> model(
+  arima_fourier91 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=9) + 
+                           fourier("week", K=1)),
+  
+  arima_fourier92 = ARIMA(box_cox(Sales, lambda) ~
+                             fourier("year", K=9) + 
+                             fourier("week", K=2)),
+  
+  arima_fourier93 = ARIMA(box_cox(Sales, lambda) ~
+                             fourier("year", K=9) + 
+                             fourier("week", K=3))
+  ) |> glance()
 
+```
+
+```{r}
+
+fit_fourier |> 
+  select(arima_fourier93) |> 
+  forecast(h = "2 years") |> 
+  autoplot(rossmann_chosen_train, level = 95)
+
+```
+
+```{r}
+
+fit_fourier |> 
+  select(arima_fourier93) |> gg_tsresiduals()
+
+```
+
+It is still heavily skewed, looking into the residual plot. The ACF is significantly improved, keeping the 1-in-20 rule. Looking at the autoplot, there are so many outliers, and certainly some seasonality left.\
+Generally, it is much better.
+
+```{r}
+
+fit_fourier |> 
+  select(arima_fourier93) |> accuracy()
+
+```
+
+### Never gonna give you up
+
+```{r}
+
+fit_fourier_features <- rossmann_chosen_train |> model(
+  arima_fourier1 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=1) + 
+                           #fourier("week", K=1) +
+                           Customers +
+                           StateHoliday + 
+                           SchoolHoliday + 
+                           Promo + 
+                           Open + 
+                           DayOfWeek,
+                         stepwise = T,
+                         approximation = T))
+  
+fit_fourier_features |> report()
 ```
 
 ## Manipulating the Sundays
@@ -981,4 +1175,82 @@ report(dhr_open_mod)
 
 ```
 
+# 2-Phase Model (my love)
+
+Phase 1: to check if the observation has `Open` == 0\
+Phase 2:\
+if `Open` == 0, Sales == 0 ;\
+otherwise, apply the DHR to forecast the Sales
+
+With this method, we could provide a more intuitive forecast. and reduce noise
+
+```{r}
+
+# 1. Fit your DHR on open days only
+dhr_model <- rossmann_chosen_train %>%
+  filter(Open == 1) %>%                      # keep only open days
+  model(
+    arima_dhr = ARIMA(
+      box_cox(Sales, lambda) ~ 
+        fourier("year", K = 9) + 
+        fourier("week", K = 3)
+      # stepwise      = FALSE,
+      # approximation = FALSE
+    )
+  )
+
+dhr_model |> report()
+
+# 2. Prepare the full test set (2015+), keeping your Open flag
+rossmann_chosen_test <- rossmann_chosen %>%
+  filter(year(Date) >= 2015)
+
+# 3. Produce forecasts for every day in the test set
+fc_full <- dhr_model %>%
+  forecast(new_data = rossmann_chosen_test)
+
+# 4. Apply the “gateway”: whenever Open == 0, force the forecast to 0
+fc_adjusted <- fc_full %>%
+  mutate(.mean = if_else(Open == 0, 0, .mean))
+
+# 5. (Optional) Plot the adjusted forecasts against your historical data
+fc_adjusted %>%
+  autoplot(rossmann_chosen_train, level = 95) +
+  labs(
+    title = "Two-Phase Forecast: Zero on Closed Days, DHR on Open Days",
+    y     = "Sales",
+    x     = "Date"
+  )
+
+
+```
+
 ## Cross-Validated model training
+
+# Try with another store to see if ARIMA and DHR are working
+
+```{r}
+
+the_chosen_two <- 360
+rossmann_chosen2 <- rossmann |> filter(Store == the_chosen_two) |> 
+  mutate(
+    # StoreType = label_encoder$fit_transform(StoreType),
+    # Assortment = label_encoder$fit_transform(Assortment),
+    # StateHoliday = label_encoder$fit_transform(StateHoliday),
+    Competition = as.integer(!is.na(CompetitionOpenSinceYear)),
+    Promotion = if_else(Promo == 0 & Promo2 == 0, 0L, 1L)) |> 
+  select(StoreType, Assortment, Competition, DayOfWeek, Date, Sales, Customers, Open, Promotion, StateHoliday, SchoolHoliday) |> 
+  filter(year(Date) %in% 2013:2014) 
+
+
+```
+
+```{r}
+
+
+
+```
+
+# Forecast
+
+I want you to help me build a 2 phase model. The first phase act like a gate way. First check if the observation has \`Open\` == 0. if \`Open\` ==0, say the sales is 0 ; elif \`Open\` == 1, apply the Corss-validated DHR. After building the framework, we then train the DHR
