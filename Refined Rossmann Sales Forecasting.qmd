@@ -826,12 +826,12 @@ rossmann_chosen_train
 ```{r, DO NOT TOUCH, HANDS OFF}
 
 
-"""
+"
 RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
 RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
 RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
 RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
-"""
+"
 
 fit_fourier <- rossmann_chosen_train |> model(
   arima_fourier11 = ARIMA(box_cox(Sales, lambda) ~ 
@@ -919,12 +919,12 @@ fit_fourier <- rossmann_chosen_train |> model(
 fit_fourier |> select(arima_fourier203) |> report()
 
 
-"""
+"
 RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
 RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
 RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
 RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
-"""
+"
 
 ```
 
@@ -1007,10 +1007,25 @@ fit_fourier |>
 It is still heavily skewed, looking into the residual plot. The ACF is significantly improved, keeping the 1-in-20 rule. Looking at the autoplot, there are so many outliers, and certainly some seasonality left.\
 Generally, it is much better.
 
+#### Do a little forecast with the DHR
+
 ```{r}
 
-fit_fourier |> 
-  select(arima_fourier93) |> accuracy()
+rossmann_chosen_test  <- rossmann_chosen %>%
+  filter_index("2015-01-01" ~ "2015-07-31")
+
+# 2. Produce the 2-year forecast on the 2015 test set
+fc_2015 <- fit_fourier %>% 
+  select(arima_fourier93) %>% 
+  forecast(new_data = rossmann_chosen_test)
+
+# 3. Check accuracy 
+accuracy(fc_2015, rossmann_chosen_test) 
+
+
+
+# fit_fourier |> 
+#   select(arima_fourier93) |> accuracy()
 
 ```
 
@@ -1020,16 +1035,17 @@ fit_fourier |>
 
 fit_fourier_features <- rossmann_chosen_train |> model(
   arima_fourier1 = ARIMA(box_cox(Sales, lambda) ~ 
-                           fourier("year", K=1) + 
-                           #fourier("week", K=1) +
+                           fourier("year", K=9) + 
+                           fourier("week", K=3) +
                            Customers +
-                           StateHoliday + 
-                           SchoolHoliday + 
-                           Promo + 
-                           Open + 
-                           DayOfWeek,
-                         stepwise = T,
-                         approximation = T))
+                           StateHoliday 
+                           # SchoolHoliday + 
+                           # Promo 
+                           # Open + 
+                           # DayOfWeek
+                         # stepwise = T,
+                         # approximation = T
+                         ))
   
 fit_fourier_features |> report()
 ```
