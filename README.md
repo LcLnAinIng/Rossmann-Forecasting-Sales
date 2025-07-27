@@ -62,23 +62,38 @@ This project follows the methodology in [Forecasting: Principles and Practice (H
       fourier("year",  K = 9) +   # yearly seasonality
       fourier("week",  K = 3))    # weekly seasonality
     ```
-  - AIC dropped to 5341, a ***26.6% improvement*** over the plain ARIMA
+  - AIC dropped to 5334, a ***26.6% improvement*** over the plain ARIMA
   - Omitted trend() because the underlying trend is non-linear.
   - Attempts to introduce additional regressors (Promotion, Competition, etc.) unexpectedly produced null models and are under investigation. 🫠
+  - Only a DHR with Customers and StateHolidays could output a valid model
 
 - Two-phase "gateway" logic
      1.  if `Open == 0` => predict `Sales == 0` ;
      2.  else => apply the DHR model
-  - This structure also returned a null model, suggesting a deeper issue with the data or specification that is being debugged. 🤡
 
 
-## Cross-Validation Plan - will do
+## Cross-Validation 
 - Fold definition - one fold per store
 - Objective - ensure forecasting performance is robust across the diverse Rossmann store network
+- To save Computation power, 5 stores are chosen to represent all the stores and train the model
+  - Those are the stores at the min, 25th quantile, 50th quantile, 75th quantile, max
+
+
+## Model Performance - with Label Encoding
+| Model                                                              |    AIC     |   RMSE    |
+| ------------------------------------------------------------------ | :-------:  | :-------: |
+| **STL + ETS**                                                      | **15411**  | **1412**  |
+| **ARIMA**                                                          |  **7273**  | **5359**  |
+| **DHR + 2 Fourier**                                                |  **5334**  | **1418**  |
+| **DHR + 2 Fourier + 2 Features**                                   |  **3742**  |  **891**  |
+| **DHR + 2 Fourier + 2 Features + Piecewise Trend**                 |  **3649**  |  **758**  |
+| **2-Phase DHR + 2 Fourier + 2 Features**                           |  **3740**  |  **796**  |
+| **2-Phase DHR + 2 Fourier + 2 Features + Piecewise Trend**         |  **3648**  |  **763**  |
+| **DHR + 2 Fourier + 2 Features - without Label Encoding**          |  **2373**  |     -     |
 
 
 ## Next Steps
-To diagnose why DHR with exogenous regressors and the gateway architecture return null fits (check data sparsity, factor levels, or optimisation constraints).
+To diagnose why DHR with exogenous regressors returns null fits (check data sparsity, factor levels, or optimisation constraints).
 A Neural Network may also be applied for forecasting
 
 Please check the refined version [here](https://github.com/LcLnAinIng/Rossmann-Forecasting-Sales/blob/LcLnAinIng-refined-R-v1/Refined%20Rossmann%20Sales%20Forecasting.qmd). (It is still very messy. I will organise it once it is done.)
