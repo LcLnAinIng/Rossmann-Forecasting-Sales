@@ -2,8 +2,8 @@
 
 # TUE G3 ipynb
 
-Please check the [notebook](https://github.com/LcLnAinIng/Rossmann-Forecasting-Sales/blob/LcLnAinIng-refined-R-v1/ADS1002%20TUE%20G3%20NoteBook%20FinAl.ipynb)\
-This version is coded in Python
+Please check the [notebook](https://github.com/LcLnAinIng/Rossmann-Forecasting-Sales/blob/LcLnAinIng-refined-R-v1/ADS1002%20TUE%20G3%20NoteBook%20FinAl.ipynb).
+This version is coded in Python.
 
 ## 1. Exploratory Analysis
 Examined correlations between Assortment, Promotions, Holiday effects, Competition, and core time-series components.
@@ -54,7 +54,7 @@ This project follows the methodology in [Forecasting: Principles and Practice (H
 
 
  ## Modelling Workflow
- - Model-tunning store
+ - Model-tuning store
    - Selected one representative store to experiment with parameter choices before scaling up to all stores.
 
  - Baseline ARIMA
