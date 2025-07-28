@@ -2,6 +2,9 @@
 
 # TUE G3 ipynb
 
+Please check the [notebook](https://github.com/LcLnAinIng/Rossmann-Forecasting-Sales/blob/LcLnAinIng-refined-R-v1/ADS1002%20TUE%20G3%20NoteBook%20FinAl.ipynb)\
+This version is coded in Python
+
 ## 1. Exploratory Analysis
 Examined correlations between Assortment, Promotions, Holiday effects, Competition, and core time-series components.
 Selected features based on _correlation_ strength.
@@ -24,7 +27,10 @@ To see further detail, please refer to the [report](https://github.com/LcLnAinIn
 
 
 # The refined version
-> Goal – Re-implement the project in R ( fpp3 ecosystem) and build store-level forecasts with ARIMA and Dynamic Harmonic Regression (DHR), validated by store-wise cross-validation.
+
+Please check the refined version [here](https://github.com/LcLnAinIng/Rossmann-Forecasting-Sales/blob/LcLnAinIng-refined-R-v1/Refined%20Rossmann%20Sales%20Forecasting.qmd). (It is still very messy. I will organise it once it is done.)
+
+> Goal – Re-implement the project in R (fpp3 ecosystem) and build store-level forecasts with ARIMA and Dynamic Harmonic Regression (DHR), validated by store-wise cross-validation.
 
 This project follows the methodology in [Forecasting: Principles and Practice (Hyndman & Athanasopoulos)](https://otexts.com/fpp3/dynamic.html).
 
@@ -91,12 +97,14 @@ This project follows the methodology in [Forecasting: Principles and Practice (H
 | **2-Phase DHR + 2 Fourier + 2 Features + Piecewise Trend**         |  **3648**  |  **763**  |
 | **DHR + 2 Fourier + 2 Features - without Label Encoding**          |  **2373**  |     -     |
 
+With unknown bugs, the forecast with `DHR + 2 Fourier + 2 Features - without Label Encoding` model is unsuccessful.
 
 ## Next Steps
 To diagnose why DHR with exogenous regressors returns null fits (check data sparsity, factor levels, or optimisation constraints).
+Forecasting with the `DHR + 2 Fourier + 2 Features — no Label Encoding` model fails because of unresolved bugs. Any warrior is welcome to be my guest.
 A Neural Network may also be applied for forecasting
 
-Please check the refined version [here](https://github.com/LcLnAinIng/Rossmann-Forecasting-Sales/blob/LcLnAinIng-refined-R-v1/Refined%20Rossmann%20Sales%20Forecasting.qmd). (It is still very messy. I will organise it once it is done.)
+
 
 
 
