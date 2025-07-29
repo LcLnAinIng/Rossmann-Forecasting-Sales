@@ -1,0 +1,1678 @@
+---
+title: "Refined rossmann Sales Forecasting"
+author: "Charis Lai"
+format: html
+editor: visual
+jupyter: ir
+---
+
+# Environment Setting
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  eval = TRUE,
+  message = FALSE,  
+  warning = FALSE,  
+  error = FALSE,   
+  out.width = "70%",
+  fig.width = 10,
+  fig.height = 8
+  # fig.retina = 3
+  )
+set.seed(6)
+
+
+library(tidyverse)
+library(readr)
+library(lubridate)
+library(kableExtra)
+library(ggResidpanel)
+library(broom)
+library(rpart)
+library(rpart.plot)
+library(visdat)
+library(tsibble)
+library(colorspace) 
+library(ggrepel) 
+library(plotly)
+library(dplyr)
+library(fpp3)
+library(openintro)
+library(GGally)
+library(car)
+library(meifly)
+library(superml)
+library(corrplot)
+library(purrr)
+library(urca)
+library(fable)
+library(job)
+
+```
+
+```{r}
+
+ross_store <- read_csv("Rossmann_store.csv")
+ross_train <- read_csv("Rossmann_train.csv")
+ross_test <- read_csv("Rossman_test.csv")
+
+```
+
+```{r}
+
+ross_store
+
+```
+
+```{r}
+
+ross_store |> names()
+
+```
+
+```{r}
+
+ross_train
+
+```
+
+```{r}
+
+ross_train |> names()
+
+```
+
+```{r}
+
+ross_test
+
+```
+
+```{r}
+
+ross_test |> names()
+
+```
+
+So we see the attributes in `ross_train` and `ross_test` are similar but not entirely,\
+`ross_test` does not have `Customer` but `Id`
+
+## Description of Data
+
+-   **Id** - an Id that represents a (Store, Date) duple within the test set
+
+-   **Store** - a unique Id for each store
+
+-   **Sales** - the turnover for any given day (this is what you are predicting)
+
+-   **Customers** - the number of customers on a given day
+
+-   **Open** - an indicator for whether the store was open: 0 = closed, 1 = open
+
+-   **StateHoliday** - indicates a state holiday. Normally all stores, with few exceptions, are closed on state holidays. Note that all schools are closed on public holidays and weekends. a = public holiday, b = Easter holiday, c = Christmas, 0 = None
+
+-   **SchoolHoliday** - indicates if the (Store, Date) was affected by the closure of public schools
+
+-   **StoreType** - differentiates between 4 different store models: a, b, c, d
+
+-   **Assortment** - describes an assortment level: a = basic, b = extra, c = extended
+
+-   **CompetitionDistance** - distance in meters to the nearest competitor store
+
+-   **CompetitionOpenSince\[Month/Year\]** - gives the approximate year and month of the time the nearest competitor was opened
+
+-   **Promo** - indicates whether a store is running a promo on that day
+
+-   **Promo2** - Promo2 is a continuing and consecutive promotion for some stores: 0 = store is not participating, 1 = store is participating
+
+-   **Promo2Since\[Year/Week\]** - describes the year and calendar week when the store started participating in Promo2
+
+-   **PromoInterval** - describes the consecutive intervals Promo2 is started, naming the months the promotion is started anew. E.g. "Feb,May,Aug,Nov" means each round starts in February, May, August, November of any given year for that store
+
+-   There is def no leap year in the dataset
+
+## Plan
+
+Merge `Ross_store` & `Ross_train` -\>`rossmann`\
+Use 80% of `rossmann`to train the models\
+Use 20% of `rossmann`to test the models\
+Use `Ross_test` to validate the models
+
+Using `Cross Validation`\
+Each store is one dataset =\> we have 1115 dataset\
+take 20% of them for testing\
+Use Dynamic Harmonic Regression\
+features: Competition, StateHolidays, Schoolholidays, Promotion, Customers (Multicolinearity)\
+*Limitation*:\
+I am not sure if this model would be too specified for this time span, 2013-2015
+
+Dealing with *Multicolinearity*:\
+Check the Variance Inflation Factor
+
+Analysis aspect:\
+Competition time span vs #promotion\
+Competition time span vs sales\
+with & without Competition vs sales\
+Promotion vs State holiday (bar chart)\
+
+# Data Analysis
+
+```{r}
+
+rossmann <- inner_join(ross_store, ross_train, by="Store") |> 
+  mutate(Date = ymd(Date)) |> 
+  as_tsibble(key = Store, index = Date)
+rossmann
+
+```
+
+```{r}
+
+rossmann |> is.na() |> colSums() |> tidy()
+
+```
+
+```{r}
+
+rossmann |> 
+  filter(is.na(CompetitionOpenSinceYear)) |> 
+  distinct(Store) |> 
+  arrange(Store) |> 
+  print()
+
+```
+
+```{r}
+
+rossmann |> 
+  filter(is.na(Promo2SinceYear)) |> 
+  distinct(Store) |> 
+  arrange(Store) |> 
+  print()
+
+```
+
+```{r}
+
+rossmann |> 
+  filter(is.na(CompetitionDistance)) |> 
+  distinct(Store) |> 
+  arrange(Store) |> 
+  print()
+
+```
+
+```{r}
+
+rossmann |> tail()
+
+```
+
+## Learning more about the features
+
+```{r}
+
+the_chosen_one <- 334
+rossmann_chosen <- rossmann |> filter(Store == the_chosen_one)
+rossmann_chosen
+
+```
+
+### State Holidays
+
+```{r}
+
+rossmann$StateHoliday |> unique()
+
+```
+
+### School Holidays
+
+```{r}
+
+rossmann$SchoolHoliday |> unique()
+
+```
+
+```{r}
+
+rossmann_chosen |> gg_season(SchoolHoliday, period = "week")
+
+```
+
+## Relationship between Open and Sales
+
+### Correlation
+
+```{r}
+
+cor(rossmann$Sales, rossmann$Open)
+
+```
+
+Sales and Open has a positive correlation with positive strength
+
+### Is there any record that the shop is open but no sales?
+
+```{r}
+
+rossmann |> filter(Open == 1, Sales == 0)
+
+```
+
+```{r}
+
+rossmann_open_no_sales <- rossmann |> 
+  filter(Open == 1, Sales == 0)
+unique(rossmann_open_no_sales$Store) |> length()
+
+```
+
+There exist stores that open but no sales. And there are 41 of them with 54 observations, which is with proportion 5.4e-5. It could be taken as mistaken record and has small impact to the forecast.
+
+### Is there any record that the shop is closed but with sales?
+
+```{r}
+
+rossmann |> filter(Open == 0, Sales != 0)
+
+```
+
+There does not exist such an mistake.\
+
+### Correlation between all the features
+
+#### To see if I could make the competition into Binary value
+
+1: there exist competition ; 0: there does not exist competition
+
+from previous table (with `colSums` ), we can see that there exist stores without competitions (323348)
+
+```{r}
+
+rossmann |> filter(is.na(CompetitionOpenSinceYear)) |> distinct(Store)
+
+```
+
+```{r}
+
+# setting if there is a Competition into a Binary value
+rossmann |> mutate(
+  Competition = as.integer(!is.na(CompetitionOpenSinceYear))
+) |> distinct(Competition)
+
+```
+
+```{r}
+
+#I just wanna see when does the competition starts and ends :melting_face:
+
+rossmann |> as_tibble() |> 
+  mutate(Competition = as.integer(!is.na(CompetitionOpenSinceYear))) |> 
+  group_by(Store) |> 
+  filter(all(Competition == 0L)) |> 
+  summarise(span_start = min(Date),
+            span_end = max(Date),
+            days_no_comp   = as.integer(span_end - span_start),
+            .groups = "drop"
+            ) 
+```
+
+$\therefore$ all the stores without competition has never had a competition
+
+$\implies$ we could make the competition into a Binary Value
+
+#### Label Encoding
+
+```{r}
+
+label_encoder <- LabelEncoder$new()
+
+rossmann_corr <- rossmann |> mutate(StoreType = label_encoder$fit_transform(StoreType),
+                                    Assortment = label_encoder$fit_transform(Assortment),
+                                    StateHoliday = label_encoder$fit_transform(StateHoliday),
+                                    Competition = as.integer(!is.na(CompetitionOpenSinceYear))) |> 
+  select(StoreType, Assortment, Competition, DayOfWeek, Sales, Customers, Open, Promo, StateHoliday, SchoolHoliday)
+
+rossmann_corr
+
+
+```
+
+```{r}
+
+rossmann_corr |> filter(Sales == 0, DayOfWeek != 7)
+
+```
+
+#### Correlation Heatmap
+
+```{r}
+# I just wanna check the correlation among features :cry:
+# 1. Make sure all columns are numeric
+
+rossmann_num <- rossmann_corr |> 
+  mutate(across(everything(), as.numeric)) |> 
+  select(-Store)
+
+# 2. Compute the correlation matrix (pairwise complete observations)
+cormat <- cor(rossmann_num, use = "pairwise.complete.obs", method = "pearson")
+
+# 3a. Base R + corrplot visualization
+corrplot(
+  cormat,
+  method        = "color",       # color‐coded squares
+  type          = "upper",       # show upper triangle only
+  order         = "original",      # cluster variables
+  addCoef.col   = "black",       # add correlation coefficients
+  tl.col        = "black",       # label color
+  tl.srt        = 45,            # label rotation
+  diag          = F          # hide diagonal
+)
+
+```
+
+### Promotion
+
+make Promotion into a Binary Value
+
+#### DayOfWeek vs Promotion
+
+```{r}
+
+rossmann |> filter(Promo == 1, DayOfWeek == 6, DayOfWeek == 7) |> sum()
+
+```
+
+There is no promotion for every weekend.
+
+```{r}
+
+promo_day_counts <- rossmann |> filter(DayOfWeek != c(6, 7)) |> 
+  count(Promo, DayOfWeek)
+
+ggplot(promo_day_counts,
+       aes(x = factor(Promo),
+           y = n,
+           fill = factor(DayOfWeek))) +
+  geom_col(position = "dodge") +
+  scale_x_discrete(
+    name   = "Promo",
+    labels = c("0" = "No Promo", "1" = "Promo")
+  ) +
+  labs(
+    y    = "Count",
+    fill = "Day of Week"
+  )
+
+```
+
+There are more weekdays with promotion than without promotion
+
+#### Promo & Promo2
+
+```{r}
+
+rossmann |> filter(Promo == 1, Promo2 == 1) |> count()
+
+```
+
+There are 194016 observations with both Promo and Promo2
+
+```{r}
+
+rossmann |> filter(Promo == 0, Promo2 == 1) |> count()
+
+```
+
+There is even more observation with no Promo but Promo2
+
+```{r}
+
+rossmann |> filter(Promo == 0, Promo2 == 0) |> count()
+
+```
+
+```{r}
+
+rossmann |> filter(Promo == 1, Promo2 == 0) |> count()
+
+```
+
+So for most of the time, there is promotion
+
+```{r}
+
+rossmann_promo <- rossmann |> mutate(
+  Promotion = if_else(Promo == 0 & Promo2 == 0, 0L, 1L)
+) 
+
+promo_monthly_ts <- rossmann_promo  |> 
+  as_tsibble(index = Date)  |> 
+  filter(Promotion == 1L)  |> 
+  index_by(month = yearmonth(Date))  |> 
+  summarise(promo_count = n())
+
+promo_monthly_ts |> ggplot(aes(x = month, y = promo_count)) + geom_line()
+
+```
+
+```{r}
+
+promo_monthly_ts
+
+```
+
+Interestingly, the second half of 2014 has the least promotion
+
+### Assortment
+
+#### Assortment vs StoreType
+
+```{r}
+
+rossmann |> group_by(StoreType) |> count(StoreType, Assortment, name="count") |> arrange(count)
+
+```
+
+```{r}
+
+rossmann |> group_by(Assortment) |> count(Assortment, StoreType, name="count") |> arrange(count)
+
+```
+
+Most of the Store are Type a.\
+Store type a has most of the proportion.\
+Assortment Type b only exists in Type b store.\
+
+# Time Series Modelling & Forecasting
+
+## Label Encoding
+
+Manipulating the dataset
+
+```{r}
+
+rossmann_chosen <- rossmann |> filter(Store == the_chosen_one) |> 
+    
+  mutate(
+    StoreType = label_encoder$fit_transform(StoreType),
+    Assortment = label_encoder$fit_transform(Assortment),
+    StateHoliday = label_encoder$fit_transform(StateHoliday),
+    Competition = as.integer(!is.na(CompetitionOpenSinceYear)),
+    Promotion = if_else(Promo == 0 & Promo2 == 0, 0L, 1L)
+    ) |> 
+    
+  select(
+      StoreType, Assortment, Competition, DayOfWeek, Date, Sales, 
+      Customers, Open, Promotion, StateHoliday, SchoolHoliday
+      )
+
+
+
+rossmann_chosen
+
+```
+
+```{r}
+
+rossmann_chosen_train <- rossmann_chosen |> 
+  filter(year(Date) %in% 2013:2014) 
+
+rossmann_chosen_test <- rossmann_chosen |> 
+  filter(year(Date) %in% 2015) 
+
+# rossmann_chosen_test  <- rossmann_chosen  |> 
+#   filter_index("2015-01-01" ~ "2015-07-31")
+
+```
+
+```{r}
+rossmann_chosen |> autoplot(Sales)
+```
+
+very messy, but we are certain that there are so many days with no sales, possibly the store was closed
+
+```{r}
+
+rossmann_chosen |> gg_season(Sales, period = "week")
+
+```
+
+```{r}
+
+rossmann_chosen |> gg_season(Sales, period = "month")
+
+```
+
+There is clearly a seasonal pattern, middle of the month has less sales
+
+```{r}
+
+rossmann_chosen |> gg_season(Sales, period = "year")
+
+```
+
+very messy, but the end of year has more sales\
+we may need differencing to handle this data
+
+```{r}
+
+rossmann_chosen |> ACF(Sales) |> autoplot()
+
+```
+
+There is a sinusoidal pattern, every 7 lags has a spike
+
+```{r}
+
+rossmann_chosen |> autoplot(difference(Sales))
+
+```
+
+#### Lambda & Box-Cox Transformation
+
+```{r}
+
+lambda <- rossmann_chosen |>
+  summarise(Sales = sum(Sales)) |>
+  features(Sales, guerrero) |> 
+  pull(lambda_guerrero)
+
+rossmann_chosen |> autoplot(box_cox(Sales, lambda))
+
+```
+
+It looks like it varies less, but still a bunch of 0s.
+
+```{r}
+
+rossmann_chosen |> autoplot(difference(box_cox(Sales, lambda)))
+
+```
+
+\
+
+```{r}
+
+rossmann_chosen |> mutate(Sales_diff7 = difference(Sales, lag = 7)) |> 
+  autoplot(Sales_diff7) +
+  labs(
+    title = paste("7-day Lag Difference of Sales for Store", the_chosen_one),
+    x     = "Date",
+    y     = "Differenced Sales"
+  ) 
+
+```
+
+```{r}
+
+monthly_median_mean <- rossmann_chosen |> 
+  # create a Year–Month index
+  index_by(Month = yearmonth(Date)) |> 
+  summarise(
+    MedianSales = median(Sales, na.rm = TRUE),
+    MeanSales = mean(Sales, na.rm = T)
+  )
+
+monthly_median_mean |> autoplot(MedianSales)
+
+```
+
+```{r}
+
+monthly_median_mean |> autoplot(MeanSales)
+
+```
+
+All we could see from the plots is there is a sales spike at the end of the year.\
+\
+
+```{r}
+
+rossmann_chosen |> model(
+  STL(box_cox(Sales, lambda))
+) |> components() |> autoplot()
+
+```
+
+The trend is piece-wise, year_seasonality is weird, the remainder is definitely not white noise
+
+```{r}
+
+rossmann |> filter(Store == the_chosen_one) |> 
+  group_by(DayOfWeek) |> 
+  filter(DayOfWeek == 6, Sales == 0)
+
+
+```
+
+We are certain that the store opens on Sat
+
+```{r}
+
+rossmann |> filter(Store == the_chosen_one) |> 
+  group_by(DayOfWeek) |> 
+  filter(DayOfWeek == 7, Sales != 0) 
+
+```
+
+And the store does not open on Sunday
+
+## Tests
+
+### Ljung_Box Test
+
+To check if the residuals are white noise
+
+```{r}
+
+rossmann_chosen |> features(box_cox(Sales, lambda), ljung_box, lag = 7)
+
+```
+
+$\because$ p=0 =\> it is not white noise
+
+### Unitroot_KPSS Test (Ordinary Differncing)
+
+```{r}
+
+rossmann_chosen |> features(
+                            box_cox(Sales, lambda),
+    list(unitroot_kpss, ~ mean(., na.rm=T))
+)
+
+```
+
+The data appears stationary, mean is not 0\
+=\> we need a constant term in the ARIMA
+
+```{r}
+
+rossmann_chosen |> features(box_cox(Sales, lambda), unitroot_ndiffs)
+
+
+```
+
+And this shows that we do not need ordinary differencing =\> d=0
+
+### Unitroot Seasonal Differencing
+
+```{r}
+
+rossmann_chosen |> features(box_cox(Sales, lambda), unitroot_nsdiffs)
+
+```
+
+We need 1 seasonal differencing =\> D = 1
+
+```{r}
+
+rossmann_chosen |> 
+  mutate(BC_Sales = box_cox(Sales, lambda), 365) |> 
+  features(BC_Sales, unitroot_ndiffs)
+
+```
+
+```{r}
+
+rossmann_chosen |> gg_tsdisplay(
+  box_cox(Sales, lambda), 
+  plot_type = "partial")
+
+```
+
+## STL + ETS (STLM)
+
+```{r}
+
+# Fit STL decomposition + ETS to seasonally adjusted component
+fit_stlm <- rossmann_chosen_train |>
+  model(
+    stlm = decomposition_model(
+      STL(Sales ~ season(window = "periodic")),
+      ETS(season_adjust ~ error() + trend() + season())
+    )
+  )
+
+fit_stlm |> report()
+
+```
+
+#### Residual plot with STLM
+
+```{r}
+
+fit_stlm |> gg_tsresiduals()
+
+```
+
+There are so many outliers and seasonal pattern in the residual graph\
+The ACF appears to be sinusoidal\
+There are multi mode in the distribution\
+=\> The model is not capturing all the info.
+
+#### Forecast with STLM
+
+```{r}
+
+fc_stlm <- fit_stlm |> 
+  forecast(new_data = rossmann_chosen_test)
+
+# 3. Check accuracy 
+accuracy(fc_stlm, rossmann_chosen_test) 
+
+```
+
+## ARIMA
+
+```{r}
+
+fit_arima <- rossmann_chosen_train |> 
+  model(
+    auto_arima = ARIMA(box_cox(Sales, lambda))
+  )
+
+fit_arima |> report()
+
+```
+
+```{r}
+
+fit_arima |> glance()
+
+```
+
+```{r}
+
+fit_arima |> tidy()
+
+```
+
+#### Residual plot with ARIMA
+
+```{r}
+
+fit_arima |> gg_tsresiduals()
+
+```
+
+I hate you. You are so ugly.
+
+#### Forecast with ARIMA
+
+```{r}
+
+fc_arima <- fit_arima |> forecast(new_data = rossmann_chosen_test)
+
+accuracy(fc_arima, rossmann_chosen_test)
+
+```
+
+## Dynamic Harmonic Regression
+
+The `trend()` component should not be added in the model since the slope of the trend changes over time.
+
+From the correlation Heatmap, we could see SchoolHoliday does not has a strong correlation with Sales,\
+for simplicity, we drop SchoolHoliday as our regressor.
+
+We put great effort to make Competition and Promotion as a Binary variable. Unfortunately, with unknown reason, only Customers and StateHoliday could be included in order not to have a null model output.
+
+Since there are multiple seasonality, so we include 2 Fourier terms to take care of the seasonality, yearly and weekly.\
+The 2 following code chunks are finding the best combination of the parameters of the Fourier terms.
+
+### 2 Fourier DHR
+
+```{r, RAWR_DO_NOT_TOUCH_HANDS_OFF}
+
+
+
+"
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+"
+
+fit_2fourier_dhr <- rossmann_chosen_train |> model(
+  arima_fourier11 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=1) +
+                           fourier("week", K=1) 
+                           #Customers +
+                           #StateHoliday + 
+                           #SchoolHoliday + 
+                           #Promotion + 
+                           #Open + 
+                           #DayOfWeek +
+                           #Assortment +
+                           #StoreType
+                         #stepwise = T
+                         ),
+  
+  arima_fourier12 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=1) +
+                           fourier("week", K=2)),
+  
+  arima_fourier13 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=1) +
+                           fourier("week", K=3)),
+  
+  arima_fourier23 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=2) +
+                           fourier("week", K=3)),
+  
+  arima_fourier33 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=3) +
+                           fourier("week", K=3)),
+  
+  arima_fourier43 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=4) +
+                           fourier("week", K=3)),
+  
+  arima_fourier53 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=5) +
+                           fourier("week", K=3)),
+  
+  arima_fourier63 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=6) +
+                           fourier("week", K=3)),
+  
+  arima_fourier73 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=7) +
+                           fourier("week", K=3)),
+  
+  arima_fourier83 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=8) +
+                           fourier("week", K=3)),
+  
+  arima_fourier93 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=9) +
+                           fourier("week", K=3)),
+  
+
+  arima_fourier103 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=10) +
+                           fourier("week", K=3)),
+  
+  arima_fourier123 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=12) +
+                           fourier("week", K=3)),
+  
+  arima_fourier153 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=15) +
+                           fourier("week", K=3)),
+  
+  arima_fourier163 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=16) +
+                           fourier("week", K=3)),
+  
+  arima_fourier183 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=18) +
+                           fourier("week", K=3)),
+  
+  arima_fourier203 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=20) +
+                           fourier("week", K=3))
+  
+
+  )
+
+
+fit_2fourier_dhr |> select(arima_fourier203) |> report()
+
+
+"
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR RAWR 
+"
+
+```
+
+```{r}
+
+# 1. pull out AIC and BIC in the original order
+metrics <- fit_2fourier_dhr  |> 
+  glance()  |> 
+  select(.model, AIC, BIC)
+
+# 2. record the original order
+orig_order <- metrics |> pull(.model)
+
+# 3. drop the two models
+metrics2 <- metrics  |> 
+  filter(!.model %in% c("arima_fourier11", "arima_fourier12"))
+
+# 4. make .model a factor so ggplot respects the original order
+metrics2 <- metrics2  |> 
+  mutate(.model = factor(.model, levels = orig_order[orig_order %in% .model]))
+
+# 5. reshape to long form
+metrics_long <- metrics2  |> 
+  pivot_longer(c(AIC, BIC), names_to = "IC", values_to = "value")
+
+# 6. plot
+ggplot(metrics_long, aes(x = .model, y = value, color = IC, group = IC)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "AIC and BIC for Selected Fourier‐ARIMA Models",
+    x     = "Model",
+    y     = "Information Criterion"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+My apology to providing a very messy graph. But the conclusion of the graph could be found here.\
+It is found that $\forall K \ge 3$ in the week Fourier term, a null model is output, while week Fourier term with K=3 gives the least AIC. And the table below proof so.\
+The K for year Fourier is alternated. There is an obvious decrease from K=1 to K=7. After since K=9, the AIC are pretty much the same.
+
+In order to keep a neat mode, we choose `fourier("week", K = 3)` and `fourier("year", K = 9)`
+
+```{r}
+
+rossmann_chosen_train |> model(
+  arima_fourier91 = ARIMA(box_cox(Sales, lambda) ~ 
+                           fourier("year", K=9) + 
+                           fourier("week", K=1)),
+  
+  arima_fourier92 = ARIMA(box_cox(Sales, lambda) ~
+                             fourier("year", K=9) + 
+                             fourier("week", K=2)),
+  
+  arima_fourier93 = ARIMA(box_cox(Sales, lambda) ~
+                             fourier("year", K=9) + 
+                             fourier("week", K=3))
+  ) |> glance()
+
+```
+
+```{r}
+
+fit_2fourier_dhr |> 
+  select(arima_fourier93) |> 
+  forecast(h = "2 years") |> 
+  autoplot(rossmann_chosen_train, level = 95)
+
+```
+
+#### Residual plot with 2Fourier DHR
+
+```{r}
+
+fit_2fourier_dhr |> 
+  select(arima_fourier93) |> gg_tsresiduals()
+
+```
+
+It is still heavily skewed, looking into the residual plot. The ACF is significantly improved, keeping the 1-in-20 rule. Looking at the autoplot, there are so many outliers, and certainly some seasonality left.\
+Generally, it is much better.
+
+#### Forecast with the 2 Fourier DHR
+
+```{r}
+
+# 1. Produce the 2-year forecast on the 2015 test set
+fc_2fourier_dhr <- fit_2fourier_dhr |> 
+  select(arima_fourier93) |> 
+  forecast(new_data = rossmann_chosen_test)
+
+# 2. Check accuracy 
+accuracy(fc_2fourier_dhr, rossmann_chosen_test) 
+
+
+```
+
+### 2Fourier 2Feature DHR
+
+```{r}
+
+fit_2fourier_2features_dhr <- rossmann_chosen_train |> model(
+  arima_fourier1 = ARIMA(box_cox(Sales, lambda) ~  
+                           fourier("year", K=9) + 
+                           fourier("week", K=3) +
+                           Customers +
+                           StateHoliday,
+                           #SchoolHoliday ,
+                           # Competition,
+                           # Promo 
+                           # Open + 
+                           # DayOfWeek
+                         stepwise = T
+                         # approximation = T
+                         ))
+  
+fit_2fourier_2features_dhr |> report()
+```
+
+#### Residual plot with 2Fourier 2Feature DHR
+
+```{r}
+
+fit_2fourier_2features_dhr |> gg_tsresiduals()
+
+```
+
+#### Forecast with 2Fourier 2Feature DHR
+
+```{r}
+
+fc_2fourier_2features_dhr <- fit_2fourier_2features_dhr |> 
+                        forecast(new_data = rossmann_chosen_test)
+
+accuracy(fc_2fourier_2features_dhr, rossmann_chosen_test)
+
+```
+
+### Piecewise trend 2Fourier 2Feature DHR
+
+```{r}
+
+rossmann_chosen_piecewise <- rossmann_chosen |>
+  mutate(
+    TrendSegment = if_else(Date < ymd("2014-01-01"), "Before2014", "After2014"),
+    TrendSegment = as.factor(TrendSegment)
+  )
+
+rossmann_chosen_piecewise_train <- rossmann_chosen_piecewise |> 
+    filter(year(Date) %in% 2013:2014) 
+
+rossmann_chosen_piecewise_test <- rossmann_chosen_piecewise |> 
+    filter(year(Date) %in% 2015)
+
+rossmann_chosen_piecewise_train
+
+```
+
+```{r}
+
+fit_piecewise_2fourier_2feature_dhr <- rossmann_chosen_piecewise_train |> 
+  model(
+    dhr_piecewise = ARIMA(
+      box_cox(Sales, lambda) ~ 
+        fourier("year", K = 9) +
+        fourier("week", K = 3) +
+        TrendSegment +
+        Customers +
+          StateHoliday,
+        stepwise = TRUE
+    )
+  )
+
+fit_piecewise_2fourier_2feature_dhr |> report()
+fit_piecewise_2fourier_2feature_dhr |> glance()
+
+```
+
+#### Residual plot with Piecewise 2Fourier 2Feature DHR
+
+```{r}
+
+fit_piecewise_2fourier_2feature_dhr |> gg_tsresiduals()
+
+```
+
+#### Forecast with Piecewise trend 2Fourier 2Feature DHR
+
+```{r}
+
+# Forecasting
+fc_piecewise_2fourier_2feature_dhr <- fit_piecewise_2fourier_2feature_dhr |> 
+    forecast(new_data = rossmann_chosen_piecewise_test)
+
+accuracy(fc_piecewise_2fourier_2feature_dhr, rossmann_chosen_piecewise_test)
+
+```
+
+## Without Label Encoding
+
+```{r}
+
+rossmann_chosen_wole <- rossmann  |> 
+  filter(Store == the_chosen_one)  |> 
+    
+  mutate(
+    Competition = as.integer(!is.na(CompetitionOpenSinceYear)),
+    Promotion  = if_else(Promo==0 & Promo2==0, 0L, 1L)
+  )  |> 
+    
+  select(
+    Date, Sales, Customers, Open, Promotion,
+    Competition, StateHoliday, SchoolHoliday,
+    StoreType, Assortment, DayOfWeek
+  ) 
+
+lambda_wole <- rossmann_chosen_wole |>
+  summarise(Sales = sum(Sales)) |>
+  features(Sales, guerrero) |> 
+  pull(lambda_guerrero)
+
+rossmann_chosen_wole_train <- rossmann_chosen_wole |> 
+  filter(year(Date) %in% 2013:2014) 
+
+rossmann_chosen_wole_test <- rossmann_chosen_wole |> 
+    filter(year(Date) >2014)
+
+rossmann_chosen_wole_test
+    
+```
+
+### 2Fourier 2Feature DHR WOLE
+
+```{r}
+
+fit_2fourier_2feature_dhr_wole <- rossmann_chosen_wole_train |> model(
+  arima_fourier1 = ARIMA(box_cox(Sales, lambda_wole) ~ 
+                           fourier("year", K=9) + 
+                           fourier("week", K=3) +
+                           Customers +
+                           StateHoliday,
+                           # SchoolHoliday
+                           # Competition +
+                           # Promo +
+                           # Open +
+                           # DayOfWeek,
+                           stepwise = T
+                         ))
+  
+fit_2fourier_2feature_dhr_wole |> report()
+
+```
+
+#### Residual plot with 2Fourier 2Feature DHR WOLE
+
+```{r}
+
+fit_2fourier_2feature_dhr_wole |> gg_tsresiduals()
+
+```
+
+#### Forecast with 2Fourier 2Feature DHR WOLE
+
+```{r}
+
+fc_2fourier_2feature_dhr_wole <- fit_2fourier_2feature_dhr_wole |> 
+    forecast(new_data = rossmann_chosen_wole_test)
+
+accuracy(fc_2fourier_2feature_dhr_wole, rossmann_chosen_wole_test)
+
+```
+
+The AIC of 2Fourier 2Feature DHR WOLE is lower
+
+# 2-Phase Model (my love) (a.k.a gateway)
+
+Phase 1: to check if the observation has `Open` == 0\
+Phase 2:\
+if `Open` == 0, Sales == 0 ;\
+otherwise, apply the DHR to forecast the Sales
+
+With this method, we could provide a more intuitive forecast. and reduce noise
+
+## 2Fou2Fea LE Gateway
+
+```{r}
+
+# 1. Forecast
+fc_2fourier_2features_dhr_gateway <- fit_2fourier_2features_dhr |> 
+  forecast(new_data = rossmann_chosen_test) |> 
+    mutate(.mean = if_else(Open == 0, 0, .mean)) # gateway
+  
+
+# Plot the forecasts against your historical data
+fc_2fourier_2features_dhr_gateway  |> 
+  autoplot(rossmann_chosen, level = 95) +
+  labs(
+    title = "Two-Phase Forecast: Zero on Closed Days, DHR on Open Days",
+    y     = "Sales",
+    x     = "Date"
+  )
+
+
+```
+
+```{r}
+
+accuracy(fc_2fourier_2features_dhr_gateway, rossmann_chosen_test)
+
+```
+
+AIC of model is decreased from 5341.766 to 3740.38, improved by 30%\
+With the gateway, the RMSE is reduced from 1418.248 to 792.5804, improved by 44%
+
+## 2-Phase Piecewise 2Fourier 2Feature DHR
+
+```{r}
+
+# 1. Forecast
+fc_piecewise_2fourier_2feature_dhr_gateway <- fit_piecewise_2fourier_2feature_dhr |> 
+  forecast(new_data = rossmann_chosen_piecewise_test) |> 
+    mutate(.mean = if_else(Open == 0, 0, .mean)) # gateway
+
+accuracy(fc_piecewise_2fourier_2feature_dhr_gateway, rossmann_chosen_test)
+
+```
+
+## 2-Phase DHR without Label Encoding
+
+```{r}
+
+fc_2fourier_2feature_dhr_wole_gateway <- fit_2fourier_2feature_dhr_wole  |> 
+  forecast(new_data = rossmann_chosen_wole_test)  |> 
+  mutate(.mean = if_else(Open == 0, 0, .mean))
+
+accuracy(fc_2fourier_2feature_dhr_wole_gateway, rossmann_chosen_wole_test)
+
+```
+
+# Cross-Validated Model Training
+
+### Slice stores with top 20% sales as a template
+
+```{r}
+
+# 1. Compute the MLE of μ (i.e. the sample mean) for each store
+store_mles_top20 <- rossmann  |> 
+  group_by(Store)  |> 
+  summarise(
+    mu_hat = mean(Sales, na.rm=TRUE),
+    .groups = "drop"
+  )
+
+# 2. Find the 99.9th percentile of those μ̂’s
+threshold_top20 <- quantile(store_mles_top20$mu_hat, 0.8)
+
+# 3. Select stores whose μ̂ is in the top120%
+selected_stores_top20 <- store_mles_top20  |> 
+  filter(mu_hat >= threshold_top20)  |> 
+  pull(Store)
+
+# 4. Build your full tsibble of those stores, with all regressors
+ross_sel_top20 <- rossmann |> 
+  filter(Store %in% selected_stores_top20) |> 
+  mutate(
+    StoreType    = label_encoder$fit_transform(StoreType),
+    Assortment   = label_encoder$fit_transform(Assortment),
+    StateHoliday = label_encoder$fit_transform(StateHoliday),
+    Competition  = as.integer(!is.na(CompetitionOpenSinceYear)),
+    Promotion    = if_else(Promo==0 & Promo2==0, 0L, 1L)
+  ) |> 
+  select(Store, Date, Sales, Customers, Open, Promotion, 
+         StateHoliday, SchoolHoliday, StoreType, Assortment) |> 
+  as_tsibble(key = Store, index = Date)
+
+# 5. Split into train (2013–2014) and test (2015)
+train_sel_top20 <- ross_sel_top20 |> filter_index("2013-01-01" ~ "2014-12-31")
+test_sel_top20  <- ross_sel_top20 |> filter_index("2015-01-01" ~ "2015-07-31")
+
+
+```
+
+```{r}
+
+ross_sel_top20 |> distinct(Store)
+
+```
+
+```{r}
+
+# 6. Leave-one-store-out CV over selected_stores
+# cv_results <- map_dfr(selected_stores, function(fold_store) {
+#   # training folds: all stores except the held-out one
+#   train_fold <- train_sel |> filter(Store != fold_store)
+#   
+#   # fit your DHR model
+#   fit <- train_fold |> 
+#     model(
+#       arima_fourier1 = ARIMA(
+#         box_cox(Sales, lambda) ~
+#           fourier("year",  K = 9) +
+#           fourier("week",  K = 3) +
+#           Customers +
+#           StateHoliday +
+#           SchoolHoliday,
+#         stepwise = TRUE
+#       )
+#     )
+#   
+#   # forecast on held-out store’s 2015 data
+#   test_fold <- test_sel |> filter(Store == fold_store)
+#   fc <- fit |> forecast(new_data = test_fold)
+#   
+#   # compute accuracy (RMSE in particular)
+#   accuracy(fc, test_fold) |> 
+#     select(.model, RMSE) |> 
+#     as_tibble() |> 
+#     mutate(Store = fold_store)
+# })
+
+cv_results_top20 <- map_dfr(selected_stores_top20, function(fold_store) {
+  tryCatch({
+    # Training set: all other stores
+    train_fold <- train_sel_top20 |> filter(Store != fold_store)
+    
+    # Fit the model (e.g., DHR)
+    fit <- train_fold |> 
+      model(
+        dhr = ARIMA(
+          box_cox(Sales, lambda) ~ 
+            fourier("year", K = 9) +
+            fourier("week", K = 3) +
+            Customers + StateHoliday + SchoolHoliday
+        )
+      )
+
+    # Test set: the held-out store
+    test_fold <- test_sel_top20 |> filter(Store == fold_store)
+
+    # Forecast and evaluate
+    fc <- forecast(fit, new_data = test_fold)
+    acc <- accuracy(fc, test_fold)
+
+    acc |> 
+      select(.model, RMSE) |> 
+      mutate(Store = fold_store)
+  }, error = function(e) {
+    message("Error in store ", fold_store, ": ", e$message)
+    return(tibble(.model = NA, RMSE = NA, Store = fold_store))
+  })
+})
+
+
+
+cv_results
+
+```
+
+## Check the running time
+
+```{r}
+# 1. Measure the full CV
+cv_time_full <- system.time({
+  cv_results_top20 <- map_dfr(selected_stores_top20, function(fold_store) {
+    tryCatch({
+      train_fold <- train_sel_top20 |> filter(Store != fold_store)
+      fit <- train_fold  |> 
+        model(
+          dhr = ARIMA(
+            box_cox(Sales, lambda) ~
+              fourier("year", K = 9) +
+              fourier("week", K = 3) +
+              Customers + StateHoliday + SchoolHoliday,
+            stepwise = TRUE
+          )
+        )
+      test_fold <- test_sel_top20 |> filter(Store == fold_store)
+      fc <- forecast(fit, new_data = test_fold)
+      accuracy(fc, test_fold)  |> 
+        select(.model, RMSE)  |> 
+        mutate(Store = fold_store)
+    }, error = function(e) {
+      message("Error in store ", fold_store, ": ", e$message)
+      tibble(.model = NA, RMSE = NA, Store = fold_store)
+    })
+  })
+})
+
+cv_time_full
+```
+
+```{r, estimate_running_time_from_one_fold}
+
+# 2. estimate from one fold
+first_store <- selected_stores_top20[1]
+train_fold  <- train_sel_top20 |> filter(Store != first_store)
+test_fold   <- test_sel_top20  |> filter(Store == first_store)
+
+time_one <- system.time({
+  fit <- train_fold  |> 
+    model(
+      dhr = ARIMA(
+        box_cox(Sales, lambda) ~
+          fourier("year", K = 9) +
+          fourier("week", K = 3) +
+          Customers + StateHoliday + SchoolHoliday,
+        stepwise = TRUE
+      )
+    )
+  fc <- fit |> forecast(new_data = test_fold)
+})
+
+# Now `fc` exists in your environment
+accuracy(fc, test_fold)
+
+# Inspect
+print(time_one)
+
+```
+
+running one fold takes 992.16s $\approx$ 16.5 mins\
+=\> 76 stores, (1+2+3+...+76)\*16.5 = 48279mins = 804.65Hrs = 33days\
+=\> 💀
+
+## Choose only 5 stores to train the CV:
+
+min, 25th quantile, 50th quantile, 75th quantile, max
+
+running time: (1+2+3+4+5)\*16.5 = 247.5 mins $\approx$ 4.125 hrs
+
+```{r}
+
+# --- 1. Select your top-stores by MLE as before ------------------------------
+
+store_mles <- rossmann |> 
+  group_by(Store) |> 
+  summarise(mu_hat = mean(Sales, na.rm=TRUE), .groups="drop")
+
+quantile_vals <- quantile(store_mles$mu_hat,
+                          probs = c(0, 0.25, 0.5, 0.75, 1),
+                          na.rm = TRUE)
+
+selected_stores <- map_int(quantile_vals, function(q) {
+  store_mles$Store[ which.min(abs(store_mles$mu_hat - q)) ]
+})
+
+# --- 2. Build a tsibble over those stores, slice train/test ---------------------
+
+ross_sel <- rossmann |> 
+  filter(Store %in% selected_stores) |> 
+  mutate(
+    StoreType    = label_encoder$fit_transform(StoreType),
+    Assortment   = label_encoder$fit_transform(Assortment),
+    StateHoliday = label_encoder$fit_transform(StateHoliday),
+    Competition  = as.integer(!is.na(CompetitionOpenSinceYear)),
+    Promotion    = if_else(Promo==0 & Promo2==0, 0L, 1L)
+  ) |> 
+  select(Store, Date, Sales, Customers, Open, Promotion,
+         StateHoliday, SchoolHoliday, StoreType, Assortment) |> 
+  as_tsibble(key = Store, index = Date)
+
+train_sel <- ross_sel |> filter_index("2013-01-01" ~ "2014-12-31")
+test_sel  <- ross_sel |> filter_index("2015-01-01" ~ "2015-07-31")
+
+
+# --- 3. Fit one DHR per store via your chosen formula ---------------------
+
+cv_models <- map(selected_stores, function(fold_store) {
+  tryCatch({
+    # Training set: all other stores
+    train_fold <- train_sel |> filter(Store != fold_store)
+    
+    # Fit the model (e.g., DHR)
+    fit <- train_fold |> 
+      model(
+        dhr = ARIMA(
+          box_cox(Sales, lambda) ~ 
+            fourier("year", K = 9) +
+            fourier("week", K = 3) +
+            Customers + StateHoliday + SchoolHoliday
+        )
+      )
+
+    # Test set: the held-out store
+    test_fold <- test_sel |> filter(Store == fold_store)
+
+    # Forecast and evaluate
+    fc <- forecast(fit, new_data = test_fold)
+    acc <- accuracy(fc, test_fold)
+
+    acc |> 
+      mutate(Store = fold_store)
+  }, error = function(e) {
+    message("Error in store ", fold_store, ": ", e$message)
+    return(tibble(.model = NA, RMSE = NA, Store = fold_store))
+  })
+})
+
+
+cv_models
+
+
+```
+
+```{r}
+
+
+cv_models2 <- map(selected_stores, function(fold_store) {
+  tryCatch({
+    train_fold <- train_sel |> filter(Store != fold_store)
+    test_fold  <- test_sel  |> filter(Store == fold_store)
+
+    fit <- train_fold |> 
+      model(
+        dhr = ARIMA(
+          box_cox(Sales, lambda) ~ 
+            fourier("year", K = 9) +
+            fourier("week", K = 3) +
+            Customers + StateHoliday
+        )
+      )
+
+    fc <- forecast(fit, new_data = test_fold)
+
+    # Manually compute accuracy on point forecasts to avoid the `.resid = list(...)` error
+    acc <- fc |>
+      select(Store, Date, .model, .mean) |>
+      left_join(test_fold |> select(Store, Date, Sales), by = c("Store","Date")) |>
+      mutate(resid = Sales - .mean) |>
+      summarise(
+        RMSE = sqrt(mean(resid^2, na.rm = TRUE)),
+        MAE  = mean(abs(resid), na.rm = TRUE),
+        MAPE = mean(abs(resid / Sales), na.rm = TRUE) * 100
+      ) |>
+      mutate(Store = fold_store, .model = "dhr")
+
+    acc
+  }, error = function(e) {
+    message("Error in store ", fold_store, ": ", e$message)
+    tibble(.model = "dhr", RMSE = NA_real_, MAE = NA_real_, MAPE = NA_real_, Store = fold_store)
+  })
+})
+
+cv_models2
+
+```
+
+# Final framework of 2-Phase Cross Validation DHR
+
+### 1. Select your top-stores by MLE as before
+
+```{r}
+
+# --- 1. Select your top-stores by MLE as before ------------------------------
+
+store_mles_gateway <- rossmann  |> 
+  group_by(Store)  |> 
+  summarise(mu_hat = mean(Sales, na.rm=TRUE), .groups="drop")
+
+quantile_vals_gateway <- quantile(store_mles_gateway$mu_hat,
+                          probs = c(0, 0.25, 0.5, 0.75, 1),
+                          na.rm = TRUE)
+
+selected_stores_gateway <- map_int(quantile_vals_gateway, function(q) {
+  store_mles_gateway$Store[ which.min(abs(store_mles_gateway$mu_hat - q)) ]
+})
+
+# threshold <- quantile(store_mles$mu_hat, 0.999)
+# 
+# selected_stores <- store_mles  |> 
+#   filter(mu_hat >= threshold)  |> 
+#   pull(Store)
+
+
+
+
+```
+
+### 2. Build a tsibble over those stores, slice train/test
+
+```{r}
+
+ross_sel_gateway <- rossmann  |> 
+  filter(Store %in% selected_stores_gateway)  |> 
+  mutate(
+    StoreType    = label_encoder$fit_transform(StoreType),
+    Assortment   = label_encoder$fit_transform(Assortment),
+    StateHoliday = label_encoder$fit_transform(StateHoliday),
+    Competition  = as.integer(!is.na(CompetitionOpenSinceYear)),
+    Promotion    = if_else(Promo==0 & Promo2==0, 0L, 1L)
+  )  |> 
+  select(Store, Date, Sales, Customers, Open, Promotion,
+         StateHoliday, SchoolHoliday, StoreType, Assortment)  |> 
+  as_tsibble(key = Store, index = Date)
+
+train_sel_gateway <- ross_sel_gateway |> filter_index("2013-01-01" ~ "2014-12-31")
+test_sel_gateway  <- ross_sel_gateway |> filter_index("2015-01-01" ~ "2015-07-31")
+
+```
+
+### 3. Fit one DHR per store via your chosen formula
+
+```{r}
+
+cv_models_gateway <- map(selected_stores_gateway, function(fold_store) {
+  train_fold_gateway <- train_sel_gateway |> filter(Store != fold_store)
+  train_fold_gateway  |> 
+    model(
+      dhr = ARIMA(
+        box_cox(Sales, lambda) ~
+          fourier("year", K = 9) +
+          fourier("week", K = 3) +
+          Customers + StateHoliday + SchoolHoliday,
+        stepwise = TRUE
+      )
+    )  |> 
+    mutate(Store = fold_store)   # tag the fold’s store
+})
+# cv_models is a mable with one row per Store
+
+
+cv_models_gateway <- bind_rows(!!!cv_models_gateway)   # !!! splices the list
+
+
+```
+
+### 4. Forecast each store’s test‐set and apply the gateway
+
+```{r}
+
+fc_cv_models_gateway <- cv_models_gateway  |> 
+  forecast(new_data = test_sel_gateway)  |> 
+  mutate(.mean = if_else(Open == 0, 0, .mean))
+
+```
+
+### 5. Check overall accuracy on the full calendar
+
+```{r}
+
+accuracy(
+  fc_cv_models_gateway |> rename(.mean = Sales_pred),
+  test_sel
+)
+
+```
