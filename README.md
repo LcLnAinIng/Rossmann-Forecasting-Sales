@@ -28,7 +28,7 @@ To see further detail, please refer to the [report](https://github.com/LcLnAinIn
 
 # The refined version
 
-Please check the refined version [here](https://github.com/LcLnAinIng/Rossmann-Forecasting-Sales/blob/LcLnAinIng-refined-R-v1/Refined%20Rossmann%20Sales%20Forecasting.qmd). (It is still very messy. I will organise it once it is done.)
+Please check the refined version [here](https://github.com/LcLnAinIng/Rossmann-Forecasting-Sales/blob/LcLnAinIng-refined-R-v1/Refined%20Rossmann%20Sales%20Forecasting%20-%20Tidy.qmd). 
 
 > Goal – Re-implement the project in R (fpp3 ecosystem) and build store-level forecasts with ARIMA and Dynamic Harmonic Regression (DHR), validated by store-wise cross-validation.
 
