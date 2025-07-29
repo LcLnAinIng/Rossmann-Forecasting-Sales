@@ -83,6 +83,7 @@ This project follows the methodology in [Forecasting: Principles and Practice (H
 - Objective - ensure forecasting performance is robust across the diverse Rossmann store network
 - To save Computation power, 5 stores are chosen to represent all the stores and train the model
   - Those are the stores at the min, 25th quantile, 50th quantile, 75th quantile, max
+- I attempted to run the Cross-Validation code. However, it takes forever to run, so I do not have the chance to finish running it (I ran it 3 times, spending 18+ hours each)
 
 
 ## Model Performance - with Label Encoding
